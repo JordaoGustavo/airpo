@@ -15,7 +15,9 @@ def _run(*args, timeout=15):
 
 def paired_airpods():
     """[(mac, name)] of paired devices whose name looks like AirPods."""
-    _, out = _run("bluetoothctl", "devices", "Paired")
+    code, out = _run("bluetoothctl", "devices", "Paired")
+    if code != 0 or "Device " not in out:  # BlueZ < 5.65 (e.g. Ubuntu 22.04)
+        _, out = _run("bluetoothctl", "paired-devices")
     found = re.findall(r"Device ([0-9A-F:]{17}) (.+)", out)
     return [(mac, name) for mac, name in found if "airpods" in name.lower()]
 

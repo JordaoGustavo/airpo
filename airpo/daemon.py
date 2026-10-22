@@ -114,6 +114,10 @@ class Daemon:
 
     async def poll(self):
         while True:
+            if not self.mac:  # paired after the daemon started
+                self.mac = await asyncio.to_thread(self._detect_mac)
+                if self.mac:
+                    self.aap = aap.AAPClient(self.mac)
             if self.mac:
                 await self.refresh()
             await asyncio.sleep(3)
