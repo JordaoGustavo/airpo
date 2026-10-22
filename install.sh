@@ -11,7 +11,9 @@ sed "s|@BIN@|$BIN|" systemd/airpo.service > ~/.config/systemd/user/airpo.service
 sed "s|@BIN@|$BIN|" systemd/airpo-tray.desktop > ~/.config/autostart/airpo-tray.desktop
 
 systemctl --user daemon-reload
-systemctl --user enable --now airpo.service
+systemctl --user enable airpo.service
+systemctl --user restart airpo.service
+pkill -f "airpo tray" || true
 nohup "$BIN" tray >/dev/null 2>&1 &
 
 echo "airpo installed. Config: ~/.config/airpo/config.toml"
