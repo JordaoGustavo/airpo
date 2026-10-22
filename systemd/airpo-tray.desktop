@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=AirPods (airpo)
+Exec=@BIN@ tray
+X-GNOME-Autostart-enabled=true

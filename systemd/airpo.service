@@ -1,0 +1,11 @@
+[Unit]
+Description=airpo - AirPods integration daemon
+After=bluetooth.target pipewire.service
+
+[Service]
+ExecStart=@BIN@ daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
