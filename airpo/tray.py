@@ -10,8 +10,15 @@ try:
     gi.require_version("AyatanaAppIndicator3", "0.1")
     from gi.repository import AyatanaAppIndicator3 as AppIndicator
 except (ValueError, ImportError):
-    gi.require_version("AppIndicator3", "0.1")
-    from gi.repository import AppIndicator3 as AppIndicator
+    try:
+        gi.require_version("AppIndicator3", "0.1")
+        from gi.repository import AppIndicator3 as AppIndicator
+    except (ValueError, ImportError):
+        raise SystemExit(
+            "AppIndicator library not found. Install it with:\n"
+            "  sudo apt install gir1.2-ayatanaappindicator3-0.1\n"
+            "(on older systems: sudo apt install gir1.2-appindicator3-0.1)"
+        ) from None
 from gi.repository import GLib, Gtk
 
 from .cli import fmt_battery, request
