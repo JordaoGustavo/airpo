@@ -19,7 +19,11 @@ A troca da Apple usa iCloud entre os aparelhos, e o Linux não participa disso. 
 
 ## Instalação (no Linux)
 
-1. Dependências: `bluez`, `pipewire-pulse` (ou pulseaudio, porque o `pactl` é usado), Python ≥ 3.11 e, para a bandeja, o suporte a AppIndicator (`gir1.2-ayatanaappindicator3-0.1` no Ubuntu e a extensão AppIndicator no GNOME).
+1. Dependências (Ubuntu):
+   ```
+   sudo apt install bluez pipewire-pulse python3-pip python3-gi gir1.2-ayatanaappindicator3-0.1 gnome-shell-extension-appindicator
+   ```
+   O ícone fica na barra de cima, ao lado do relógio, com a bateria do lado (🎧 80%), como no Mac. No Ubuntu a extensão AppIndicator já vem ligada. Em GNOME puro, ative "AppIndicator" no app Extensões.
 2. Pareie uma vez: com os fones na caixinha aberta, segure o botão de trás até a luz piscar em branco. Depois rode `bluetoothctl` → `scan on` → `pair <MAC>` → `trust <MAC>`.
    Os AirPods guardam vários pareamentos, então o do Mac continua valendo.
 3. Opcional, mas recomendado: em `/etc/bluetooth/main.conf`, na seção `[General]`:

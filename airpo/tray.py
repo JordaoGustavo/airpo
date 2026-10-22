@@ -1,92 +1,123 @@
-"""System tray icon: battery in the tooltip/menu, connect toggle and noise modes."""
+"""Top-bar indicator (Ubuntu/GNOME AppIndicator): headphone icon + battery label,
+with a macOS-like menu for battery, connection and noise modes."""
 
 import threading
-import time
 
-import pystray
-from PIL import Image, ImageDraw
+import gi
+
+gi.require_version("Gtk", "3.0")
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator
+except (ValueError, ImportError):
+    gi.require_version("AppIndicator3", "0.1")
+    from gi.repository import AppIndicator3 as AppIndicator
+from gi.repository import GLib, Gtk
 
 from .cli import fmt_battery, request
 
-MODES = [("Noise Cancellation", "anc"), ("Transparency", "transparency"),
-         ("Adaptive", "adaptive"), ("Off", "off")]
+MODES = [("Cancelamento de Ruído", "anc"), ("Transparência", "transparency"),
+         ("Adaptativo", "adaptive"), ("Desligado", "off")]
+PARTS = [("left", "Esquerdo"), ("right", "Direito"), ("case", "Estojo")]
+ICON_ON = "audio-headphones-symbolic"
+ICON_OFF = "audio-headphones"
 
 
-def icon_image(connected):
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    color = (255, 255, 255, 255) if connected else (140, 140, 140, 255)
-    for x in (14, 38):  # two stylised buds
-        d.ellipse((x, 10, x + 14, 30), fill=color)
-        d.rounded_rectangle((x + 4, 24, x + 10, 54), radius=3, fill=color)
-    return img
+def safe_request(**payload):
+    try:
+        return request(**payload)
+    except SystemExit:
+        return {}
 
 
 class Tray:
     def __init__(self):
         self.status = {}
-        self.icon = pystray.Icon("airpo", icon_image(False), "AirPods", menu=self.menu())
+        self.updating = False
+        self.ind = AppIndicator.Indicator.new(
+            "airpo", ICON_OFF, AppIndicator.IndicatorCategory.HARDWARE)
+        self.ind.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+        self.build_menu()
+        self.refresh()
+        GLib.timeout_add_seconds(5, self.refresh)
 
-    def safe_status(self):
-        try:
-            return request(cmd="status")
-        except SystemExit:
-            return {}
+    def build_menu(self):
+        menu = Gtk.Menu()
+        self.title = Gtk.MenuItem(label="AirPods")
+        self.title.set_sensitive(False)
+        menu.append(self.title)
+        self.battery_items = {}
+        for part, name in PARTS:
+            item = Gtk.MenuItem(label=f"{name}: --")
+            item.set_sensitive(False)
+            self.battery_items[part] = (item, name)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
 
-    def label(self, part):
-        b = self.status.get("battery", {}).get(part)
-        return lambda _: f"{part.capitalize()}: {fmt_battery(b) if b else '--'}"
+        self.connect_item = Gtk.MenuItem(label="Conectar a este computador")
+        self.connect_item.connect("activate", lambda _: self.send(cmd="toggle"))
+        menu.append(self.connect_item)
+        menu.append(Gtk.SeparatorMenuItem())
 
-    def menu(self):
-        mode_items = [
-            pystray.MenuItem(name, self.setter(mode), radio=True,
-                             checked=lambda _, m=mode: self.status.get("noise") == m,
-                             enabled=lambda _: self.status.get("connected", False))
-            for name, mode in MODES
-        ]
-        return pystray.Menu(
-            pystray.MenuItem(self.label("left"), None, enabled=False),
-            pystray.MenuItem(self.label("right"), None, enabled=False),
-            pystray.MenuItem(self.label("case"), None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                lambda _: "Disconnect" if self.status.get("connected") else "Connect to this computer",
-                lambda: self.send(cmd="toggle"), default=True),
-            pystray.Menu.SEPARATOR,
-            *mode_items,
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit", lambda: self.icon.stop()),
-        )
+        self.mode_items = {}
+        group = None
+        for name, mode in MODES:
+            item = Gtk.RadioMenuItem.new_with_label_from_widget(group, name)
+            group = item
+            item.connect("toggled", self.on_mode, mode)
+            self.mode_items[mode] = item
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
 
-    def setter(self, mode):
-        return lambda: self.send(cmd="noise", mode=mode)
+        quit_item = Gtk.MenuItem(label="Sair")
+        quit_item.connect("activate", lambda _: Gtk.main_quit())
+        menu.append(quit_item)
+        menu.show_all()
+        self.ind.set_menu(menu)
+
+    def on_mode(self, item, mode):
+        if item.get_active() and not self.updating and self.status.get("noise") != mode:
+            self.send(cmd="noise", mode=mode)
 
     def send(self, **payload):
-        threading.Thread(target=lambda: (self.safe_send(payload), self.update()), daemon=True).start()
+        def work():
+            safe_request(**payload)
+            GLib.idle_add(self.refresh)
+        threading.Thread(target=work, daemon=True).start()
 
-    def safe_send(self, payload):
-        try:
-            request(**payload)
-        except SystemExit:
-            pass
+    def refresh(self):
+        threading.Thread(target=lambda: GLib.idle_add(self.apply, safe_request(cmd="status")),
+                         daemon=True).start()
+        return True
 
-    def update(self):
-        self.status = self.safe_status()
-        bat = self.status.get("battery", {})
-        tip = "  ".join(f"{k[0].upper()} {fmt_battery(v)}" for k, v in bat.items()) or "AirPods"
-        self.icon.icon = icon_image(self.status.get("connected", False))
-        self.icon.title = tip
-        self.icon.update_menu()
+    def apply(self, st):
+        self.status = st
+        self.updating = True
+        connected = st.get("connected", False)
+        bat = st.get("battery", {})
 
-    def loop(self):
-        while True:
-            self.update()
-            time.sleep(5)
+        # Top-bar label: lowest bud level, like the macOS menu bar widget.
+        buds = [bat[p]["level"] for p in ("left", "right")
+                if p in bat and bat[p]["status"] != "disconnected"]
+        self.ind.set_icon_full(ICON_ON if connected else ICON_OFF, "AirPods")
+        self.ind.set_label(f"{min(buds)}%" if buds else "", "100%")
 
-    def run(self):
-        threading.Thread(target=self.loop, daemon=True).start()
-        self.icon.run()
+        if not st:
+            self.title.set_label("airpo daemon parado")
+        else:
+            where = "Conectado" if connected else ("Por perto" if st.get("nearby") else "Longe")
+            self.title.set_label(f"{st.get('model', 'AirPods')} — {where}")
+        for part, (item, name) in self.battery_items.items():
+            item.set_label(f"{name}: {fmt_battery(bat[part]) if part in bat else '--'}")
+        self.connect_item.set_label("Desconectar" if connected else "Conectar a este computador")
+        for mode, item in self.mode_items.items():
+            item.set_sensitive(connected)
+            if st.get("noise") == mode:
+                item.set_active(True)
+        self.updating = False
+        return False
 
 
 def main():
-    Tray().run()
+    Tray()
+    Gtk.main()
