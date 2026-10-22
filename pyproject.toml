@@ -2,8 +2,8 @@
 name = "airpo"
 version = "0.1.0"
 description = "AirPods on Linux: battery, noise control and Mac-style switching"
-requires-python = ">=3.11"
-dependencies = ["bleak>=0.21"]
+requires-python = ">=3.10"
+dependencies = ["bleak>=0.21", "tomli>=2; python_version < '3.11'"]
 
 [project.scripts]
 airpo = "airpo.cli:main"
