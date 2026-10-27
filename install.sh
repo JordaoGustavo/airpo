@@ -10,6 +10,19 @@ mkdir -p ~/.config/systemd/user ~/.config/autostart
 sed "s|@BIN@|$BIN|" systemd/airpo.service > ~/.config/systemd/user/airpo.service
 sed "s|@BIN@|$BIN|" systemd/airpo-tray.desktop > ~/.config/autostart/airpo-tray.desktop
 
+# Run bluetoothd with experimental features so the daemon can scan passively
+# (a nonstop active scan knocks BLE keyboards/mice off on many adapters).
+BTD="$(systemctl cat bluetooth.service 2>/dev/null | sed -n 's/^ExecStart=\([^ ]*bluetoothd\).*/\1/p' | tail -1)"
+DROPIN=/etc/systemd/system/bluetooth.service.d/airpo-experimental.conf
+if [ -n "$BTD" ] && ! systemctl cat bluetooth.service | grep -q "^ExecStart=.*bluetoothd.* \(-E\|--experimental\)"; then
+    echo "Enabling BlueZ experimental features (needs sudo; Bluetooth restarts briefly)"
+    sudo mkdir -p "$(dirname "$DROPIN")"
+    printf '[Service]\nExecStart=\nExecStart=%s -E\n' "$BTD" | sudo tee "$DROPIN" >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl restart bluetooth
+    sleep 2
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable airpo.service
 systemctl --user restart airpo.service

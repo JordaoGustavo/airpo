@@ -32,6 +32,7 @@ A troca da Apple usa iCloud entre os aparelhos, e o Linux não participa disso. 
    ```
    Isso faz o Linux se apresentar como um aparelho Apple, e alguns recursos do AAP só respondem assim. Depois rode `sudo systemctl restart bluetooth`.
 4. `./install.sh`
+   Ele pede `sudo` uma vez para ligar os recursos experimentais do BlueZ (`bluetoothd -E`). Assim o airpo procura os fones sem atrapalhar teclado e mouse Bluetooth. O Bluetooth reinicia rapidinho nessa hora.
 
 ## No Mac
 
