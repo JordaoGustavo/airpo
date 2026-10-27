@@ -41,6 +41,7 @@ class Daemon:
         self.proximity = None
         self.last_seen = 0.0
         self.last_auto_attempt = 0.0
+        self.scan_gap = 0  # seconds between scan bursts (0 = continuous)
         self.aap = aap.AAPClient(self.mac) if self.mac else None
         self._busy = asyncio.Lock()
 
@@ -63,7 +64,7 @@ class Daemon:
         if not prox or adv.rssi < self.cfg.rssi_threshold:
             return
         now = time.monotonic()
-        reappeared = now - self.last_seen > self.cfg.reappear_after
+        reappeared = now - self.last_seen > self.cfg.reappear_after + self.scan_gap + 10 * bool(self.scan_gap)
         self.last_seen = now
         self.proximity = prox
         if reappeared and not self.connected:
@@ -172,16 +173,78 @@ class Daemon:
         await writer.drain()
         writer.close()
 
+    # ---- scanning --------------------------------------------------------
+    # A nonstop active LE scan (BlueZ discovery) starves other BLE links on many
+    # controllers: keyboards/mice drop and don't reconnect until BT is toggled.
+    # So: passive scan when BlueZ supports it, short active bursts otherwise,
+    # and no scanning at all while the AirPods are connected.
+
+    async def _passive_scanner(self):
+        try:
+            from bleak.assigned_numbers import AdvertisementDataType
+            try:
+                from bleak.args.bluez import OrPattern
+            except ImportError:  # bleak < 1.0
+                from bleak.backends.bluezdbus.advertisement_monitor import OrPattern
+            pattern = OrPattern(0, AdvertisementDataType.MANUFACTURER_SPECIFIC_DATA,
+                                bytes([0x4C, 0x00, ble.PROXIMITY_PAIRING]))
+            scanner = BleakScanner(self.on_advertisement, scanning_mode="passive",
+                                   bluez={"or_patterns": [pattern]})
+            await scanner.start()
+            return scanner
+        except Exception as e:  # old BlueZ / no --experimental
+            log.info("passive BLE scan unavailable (%s); using short active bursts", e)
+            return None
+
+    async def scan_loop(self):
+        while True:
+            try:
+                await self._scan()
+            except Exception as e:  # adapter reset / BT toggled: start over
+                log.info("BLE scan stopped (%s); restarting", e)
+                await asyncio.sleep(5)
+
+    async def _scan(self):
+        passive = True
+        scanner = None
+        try:
+            while True:
+                if self.connected:
+                    if scanner:
+                        await scanner.stop()
+                        scanner = None
+                    await asyncio.sleep(3)
+                    continue
+                if passive:
+                    if not scanner:
+                        scanner = await self._passive_scanner()
+                        passive = scanner is not None
+                        self.scan_gap = 0 if passive else 20
+                    if passive:
+                        await asyncio.sleep(3)
+                        continue
+                burst = BleakScanner(self.on_advertisement)
+                await burst.start()
+                try:
+                    await asyncio.sleep(8)
+                finally:
+                    await burst.stop()
+                await asyncio.sleep(self.scan_gap)
+        finally:
+            if scanner:
+                try:
+                    await scanner.stop()
+                except Exception:
+                    pass
+
     async def run(self):
         sock = config.SOCKET_PATH
         if sock.exists():
             sock.unlink()
         server = await asyncio.start_unix_server(self.handle, path=str(sock))
-        scanner = BleakScanner(self.on_advertisement)
-        await scanner.start()
         log.info("airpo daemon running (socket %s)", sock)
         async with server:
-            await self.poll()
+            await asyncio.gather(self.poll(), self.scan_loop())
 
 
 def main():
